@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="SKANTRI RACE — game balap mobil 3D arcade berbasis Three.js, SMKS PGRI SINGOSARI." />
+    <meta name="author" content="Mohammad Yusron Kholish, S.Kom — SMKS PGRI SINGOSARI" />
+    <meta name="theme-color" content="#06101f" />
+    <link rel="icon" type="image/png" href="/src/assets/logo-smks-pgri-singosari.png" />
+    <title>SKANTRI RACE</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage" class="stage"></div>
+      <div id="hud" class="hud" hidden></div>
+      <div id="touch" class="touch" hidden></div>
+      <div id="menu" class="menu" hidden></div>
+
+      <div id="loading" class="loading">
+        <img class="loading-badge" src="/src/assets/logo-smks-pgri-singosari.png" alt="Logo SMKS PGRI SINGOSARI" width="249" height="238" />
+        <div class="loading-logo"><span>SKANTRI</span><b>RACE</b></div>
+        <div class="loading-bar"><i></i></div>
+        <p>Menyiapkan lintasan…</p>
+        <small class="loading-credit">Pengembang: Mohammad Yusron Kholish, S.Kom · SMKS PGRI SINGOSARI</small>
+      </div>
+
+      <div id="fatal" class="fatal" hidden>
+        <h1></h1>
+        <p></p>
+      </div>
+    </div>
+    <noscript>Aktifkan JavaScript untuk memainkan SKANTRI RACE.</noscript>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

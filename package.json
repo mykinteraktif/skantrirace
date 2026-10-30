@@ -1,8 +1,8 @@
 {
   "name": "skantri-race",
   "private": true,
-  "version": "0.1.0",
-  "description": "SKANTRI RACE — game balap mobil 3D arcade berbasis Three.js (Tahap 1: prototipe)",
+  "version": "1.2.0",
+  "description": "SKANTRI RACE — game balap mobil 3D arcade berbasis Three.js (1–2 pemain: layar terbagi atau online 2 perangkat)",
   "author": "Mohammad Yusron Kholish, S.Kom (SMKS PGRI SINGOSARI)",
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "build:pages": "vite build --outDir docs --emptyOutDir && node -e \"require('fs').writeFileSync('docs/.nojekyll','')\"",
     "preview": "vite preview",
     "test": "node --test tests/logic.test.mjs",
-    "test:browser": "node tests/browser.test.mjs"
+    "test:browser": "node tests/browser.test.mjs",
+    "test:online": "node tests/online.test.mjs"
   },
   "engines": {
     "node": ">=20.19.0"
@@ -19,6 +20,8 @@
   "dependencies": {
     "@fontsource/rajdhani": "^5.3.0",
     "@fontsource/russo-one": "^5.3.0",
+    "peerjs": "^1.5.5",
+    "qrcode-generator": "^2.0.4",
     "three": "^0.186.1"
   },
   "devDependencies": {

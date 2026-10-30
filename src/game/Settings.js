@@ -16,6 +16,24 @@ export const QUALITY = {
 export const QUALITY_CHOICES = ['otomatis', 'rendah', 'sedang', 'tinggi'];
 export const TOUCH_CHOICES = ['otomatis', 'selalu', 'mati'];
 
+// Mode 2 pemain (layar terbagi)
+export const DUO_RIVAL_CHOICES = [0, 2, 4];
+export const DUO_LAYOUTS = ['atas-bawah', 'kiri-kanan'];
+export const DUO_DEFAULT_NAMES = ['PEMAIN 1', 'PEMAIN 2'];
+export const NAME_MAX = 12;
+
+/** Nama pemain: huruf kapital, angka, spasi, titik, tanda hubung; maks. 12 karakter. */
+export function sanitizeName(name, fallback = '') {
+  const clean = String(name ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 .\-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, NAME_MAX)
+    .trim();
+  return clean || fallback;
+}
+
 export const DEFAULT_SETTINGS = {
   car: DEFAULT_CAR,
   track: DEFAULT_TRACK,
@@ -25,6 +43,14 @@ export const DEFAULT_SETTINGS = {
   volume: 70,
   touch: 'otomatis',
   showFps: false,
+  duoCars: [DEFAULT_CAR, 'vortex'],
+  duoNames: [...DUO_DEFAULT_NAMES],
+  duoRivals: 4,
+  duoLayout: 'atas-bawah',
+  duoPadSwap: false,
+  // Mode online (2 perangkat)
+  netName: 'PEMAIN',
+  netRivals: 2,
 };
 
 export function loadSettings() {
@@ -44,6 +70,15 @@ export function loadSettings() {
   if (!TOUCH_CHOICES.includes(s.touch)) s.touch = 'otomatis';
   s.volume = Math.max(0, Math.min(100, Number(s.volume) || 0));
   s.showFps = !!s.showFps;
+  const cars = Array.isArray(s.duoCars) ? s.duoCars : [];
+  s.duoCars = DEFAULT_SETTINGS.duoCars.map((d, i) => (CARS[cars[i]] ? cars[i] : d));
+  const names = Array.isArray(s.duoNames) ? s.duoNames : [];
+  s.duoNames = DUO_DEFAULT_NAMES.map((d, i) => sanitizeName(names[i], d));
+  if (!DUO_RIVAL_CHOICES.includes(s.duoRivals)) s.duoRivals = DEFAULT_SETTINGS.duoRivals;
+  if (!DUO_LAYOUTS.includes(s.duoLayout)) s.duoLayout = DEFAULT_SETTINGS.duoLayout;
+  s.duoPadSwap = !!s.duoPadSwap;
+  s.netName = sanitizeName(s.netName, DEFAULT_SETTINGS.netName);
+  if (!DUO_RIVAL_CHOICES.includes(s.netRivals)) s.netRivals = DEFAULT_SETTINGS.netRivals;
   return s;
 }
 

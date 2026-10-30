@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Uji browser SKANTRI RACE (Chromium headless + SwiftShader / WebGL software). OPSIONAL.
+ * Bagian: A latihan bebas · B balapan · C menu lengkap/mobil/lintasan/nitro/item/sentuh · D mode 2 pemain.
  *
  * Persiapan (sekali):  npm i -D playwright  lalu  npx playwright install chromium
  * Jalankan:            npm run build && npm run preview   (terminal 1)
@@ -334,7 +335,8 @@ check(
   'Gas ditahan saat countdown → semua mobil tetap diam',
   Math.hypot(mid.x - grid0.x, mid.z - grid0.z) < 0.01 && mid.racers.every((x) => Math.abs(x.speed) < 0.01),
 );
-r = await waitFor((x) => x.phase === 'racing', 30000, 50);
+// Server tanpa GPU bisa < 1 FPS → beri waktu nyata yang longgar (yang diuji urutan fasenya, bukan kecepatan render)
+r = await waitFor((x) => x.phase === 'racing', 120000, 50);
 check('Setelah hitungan 1 → fase balapan', r.ok);
 const goTxt = await page.textContent('[data-count-num]');
 check('Countdown menampilkan GO!', goTxt === 'GO!', goTxt);
@@ -432,14 +434,14 @@ console.log('STATS balapan', JSON.stringify({ drawCalls: fin.drawCalls, triangle
 await page.setViewportSize({ width: 1100, height: 620 });
 await sleep(800);
 s = await snap();
-check('Menu utama punya 6 pilihan (Balap, Mobil, Lintasan, Latihan, Pengaturan, Petunjuk)', (await page.$$eval('.screen-main .menu-btn', (b) => b.length)) === 6);
+check('Menu utama punya 7 pilihan (Balap, Multiplayer, Mobil, Lintasan, Latihan, Pengaturan, Petunjuk)', (await page.$$eval('.screen-main .menu-btn', (b) => b.length)) === 7);
 
 // --- Pengaturan: ubah & tersimpan setelah halaman dimuat ulang
 await page.click('[data-action="settings"]');
 await sleep(800);
-await page.click('[data-seg="difficulty"] [data-val="sulit"]');
-await page.click('[data-seg="laps"] [data-val="1"]');
-await page.click('[data-seg="quality"] [data-val="rendah"]');
+await page.click('[data-screen="settings"] [data-seg="difficulty"] [data-val="sulit"]');
+await page.click('[data-screen="settings"] [data-seg="laps"] [data-val="1"]');
+await page.click('[data-screen="settings"] [data-seg="quality"] [data-val="rendah"]');
 await page.fill('[data-volume]', '40');
 await page.dispatchEvent('[data-volume]', 'input');
 await sleep(1500);
@@ -457,7 +459,7 @@ check('Kartu info menu menampilkan pilihan terbaru', infoTxt.includes('1 lap') &
 
 // --- Pilih mobil
 await page.click('[data-action="garage"]');
-await page.waitForFunction(() => document.querySelectorAll('[data-thumb][src^="data:image"]').length === 4, null, { timeout: 120000 });
+await page.waitForFunction(() => document.querySelectorAll('.car-card [data-thumb][src^="data:image"]').length === 4, null, { timeout: 120000 });
 check('Garasi: gambar mini 3D untuk 4 mobil dibuat', true);
 const seen = [];
 for (const id of ['skantri', 'vortex', 'phantom', 'titan']) {
@@ -595,7 +597,8 @@ await tctx.addInitScript(() => localStorage.setItem('skantri-race-settings-v1', 
 const tp = await tctx.newPage();
 tp.on('pageerror', (e) => errors.push('PAGEERROR(touch) ' + e.message));
 await tp.goto(GAME_URL);
-await tp.waitForFunction(() => window.__skantri, null, { timeout: 60000 });
+// Dua halaman WebGL software sekaligus di server tanpa GPU → beri waktu muat lebih panjang
+await tp.waitForFunction(() => window.__skantri, null, { timeout: 180000 });
 await sleep(2500);
 await tp.evaluate(() => window.__skantri.startPractice());
 await sleep(1500);
@@ -628,6 +631,341 @@ await tp.click('[data-act="pause"]');
 await sleep(800);
 check('Tombol JEDA sentuh membuka layar jeda', (await tsnap()).mode === 'paused');
 await tctx.close();
+
+
+// ===================================================== D. MODE 2 PEMAIN (layar terbagi)
+/** Panel HUD tiap pemain: elemen utama tidak saling menimpa & tidak keluar dari bagian layarnya. */
+const hudLayoutIssues = () =>
+  page.evaluate(() => {
+    const issues = [];
+    document.querySelectorAll('.hud[data-pane]').forEach((pane) => {
+      if (pane.hidden) return;
+      const pr = pane.getBoundingClientRect();
+      const boxes = [];
+      for (const sel of ['.hud-tl', '.hud-tr', '.hud-bl', '.hud-br', '.hud-nitro', '.hud-standings']) {
+        const el = pane.querySelector(sel);
+        if (!el || getComputedStyle(el).display === 'none') continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) continue;
+        if (r.left < pr.left - 1 || r.right > pr.right + 1 || r.top < pr.top - 1 || r.bottom > pr.bottom + 1) issues.push(`P${pane.dataset.pane} ${sel} keluar`);
+        boxes.push([sel, r]);
+      }
+      for (let i = 0; i < boxes.length; i++)
+        for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i][1], b = boxes[j][1];
+          if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) issues.push(`P${pane.dataset.pane} ${boxes[i][0]}×${boxes[j][0]}`);
+        }
+    });
+    return issues;
+  });
+
+/** Memori GPU diukur dengan menggambar SELURUH adegan sekali (tanpa frustum culling) → tidak bergantung arah kamera. */
+const memAll = () =>
+  page.evaluate(() => {
+    const g = window.__skantri;
+    const changed = [];
+    g.scene.traverse((o) => {
+      if (o.frustumCulled) {
+        o.frustumCulled = false;
+        changed.push(o);
+      }
+    });
+    g.renderer.render(g.scene, g.camera);
+    changed.forEach((o) => (o.frustumCulled = true));
+    return { geometries: g.renderer.info.memory.geometries, textures: g.renderer.info.memory.textures };
+  });
+
+/** Menu utama → MULTIPLAYER → SATU LAYAR (lobi 2 pemain). */
+const openDuoLobby = async () => {
+  await page.click('[data-action="multi"]');
+  await page.waitForSelector('[data-screen="multi"]:not([hidden])');
+  await page.click('[data-screen="multi"] [data-action="duo"]');
+};
+
+// Menu utama: 7 tombol tetap muat di berbagai ukuran layar
+for (const [w, h] of [[960, 540], [800, 600], [1366, 768]]) {
+  await page.setViewportSize({ width: w, height: h });
+  await sleep(900);
+  const fit = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.screen-main .menu-btn')].map((e) => e.getBoundingClientRect());
+    const extra = ['.screen-main .credit', '.screen-main .brand'].map((q) => document.querySelector(q).getBoundingClientRect());
+    const inside = [...btn, ...extra].every((r) => r.top >= 0 && r.bottom <= innerHeight + 0.5 && r.left >= 0 && r.right <= innerWidth + 0.5);
+    const noOverlap = btn.every((r, i) => i === 0 || r.top >= btn[i - 1].bottom - 0.5) && extra[0].top >= btn[btn.length - 1].bottom - 0.5;
+    return { inside, noOverlap, bottom: Math.round(extra[0].bottom) };
+  });
+  check(`Menu utama 7 tombol muat di layar ${w}×${h}`, fit.inside && fit.noOverlap, JSON.stringify(fit));
+}
+await page.setViewportSize({ width: 960, height: 540 });
+await sleep(800);
+
+// --- Lobi
+await openDuoLobby();
+r = await waitFor((x) => x.menuView === 'duo' && x.p2?.visible, 30000);
+await page.waitForFunction(() => document.querySelectorAll('[data-screen="duo"] .duo-thumb img[src^="data:image"]').length === 8, null, { timeout: 120000 });
+check('2 PEMAIN → lobi tampil, mobil kedua pemain tampil berdampingan', r.ok && (await page.isVisible('[data-screen="duo"]')) && r.s.p2.visible, `p2=${JSON.stringify(r.s.p2)}`);
+let lob = await snap();
+const CAR_SEQ = ['skantri', 'vortex', 'phantom', 'titan'];
+const c0 = lob.settings.duoCars.slice();
+const exp0 = CAR_SEQ[(CAR_SEQ.indexOf(c0[0]) + 1) % 4];
+const exp1 = CAR_SEQ[(CAR_SEQ.indexOf(c0[1]) + 3) % 4];
+await page.keyboard.press('KeyD');
+await page.keyboard.press('ArrowLeft');
+await sleep(900);
+lob = await snap();
+check('D mengganti mobil PEMAIN 1, ← mengganti mobil PEMAIN 2 (model 3D ikut berganti)', lob.settings.duoCars[0] === exp0 && lob.settings.duoCars[1] === exp1 && lob.car === exp0 && lob.p2.car === exp1, `${c0} → ${lob.settings.duoCars} (3D: ${lob.car}/${lob.p2.car})`);
+// Nama mengandung huruf D & A — tidak boleh mengganti mobil saat diketik
+await page.click('[data-duo-name="0"]');
+await page.keyboard.press('Control+A');
+await page.keyboard.type('dani');
+await page.keyboard.press('Enter');
+await page.click('[data-duo-name="1"]');
+await page.keyboard.press('Control+A');
+await page.keyboard.type('budi_77!');
+await page.keyboard.press('Tab');
+await sleep(700);
+lob = await snap();
+check('Nama pemain diketik & tersimpan (huruf kapital, karakter aneh dibuang)', lob.settings.duoNames[0] === 'DANI' && lob.settings.duoNames[1] === 'BUDI77', lob.settings.duoNames.join(','));
+check('Mengetik nama tidak mengganti mobil & Enter di kolom nama tidak memulai balapan', lob.settings.duoCars[0] === exp0 && lob.settings.duoCars[1] === exp1 && lob.mode === 'menu');
+const trk0 = lob.settings.track;
+await page.click('[data-duo-track-step="1"]');
+await sleep(2500);
+lob = await snap();
+const trkLabel = await page.textContent('[data-duo-track]');
+check('Tombol › lintasan di lobi mengganti lintasan 3D', lob.settings.track !== trk0 && lob.track === lob.settings.track && lob.p2.visible, `${trk0} → ${lob.track} (“${trkLabel}”)`);
+await page.click('[data-screen="duo"] [data-seg="duoRivals"] [data-val="2"]');
+await page.click('[data-screen="duo"] [data-seg="duoLayout"] [data-val="atas-bawah"]');
+await page.click('[data-screen="duo"] [data-seg="laps"] [data-val="1"]');
+await page.keyboard.press('Escape');
+r = await waitFor((x) => x.menuScreen === 'main' && x.menuView === 'main', 10000);
+check('Esc dari lobi → menu utama; mobil kembali ke pilihan mode 1 pemain', r.ok && r.s.car === r.s.settings.car && !r.s.p2.visible, `${r.s.car}/${r.s.settings.car}`);
+await openDuoLobby();
+r = await waitFor((x) => x.menuView === 'duo' && x.car === exp0, 20000);
+await sleep(1200);
+check('Pilihan lobi tetap tersimpan saat dibuka lagi', r.ok && (await page.inputValue('[data-duo-name="0"]')) === 'DANI' && r.s.settings.duoRivals === 2);
+await page.screenshot({ path: `${OUT}/17-duo-lobby.png` });
+
+// --- Balapan atas–bawah: 2 AI + 2 pemain
+await page.keyboard.press('Enter');
+// tunggu frame pertama balapan benar-benar tergambar (2 tampilan)
+r = await waitFor((x) => x.mode === 'playing' && x.duo && x.phase === 'countdown' && x.renders === 2, 30000);
+let d = r.s;
+check('Enter di lobi → balapan 2 pemain: 2 AI + P1 & P2 di baris belakang', r.ok && d.racers.length === 4 && d.players.length === 2 && d.players[0].position === 3 && d.players[1].position === 4 && d.players[0].car === exp0 && d.players[1].car === exp1, d.players?.map((p) => `${p.name}:${p.car}:P${p.position}`).join(' '));
+check('Layar terbagi atas–bawah: 2 tampilan 960×270, 2× render per frame', d.split && d.renders === 2 && JSON.stringify(d.views) === JSON.stringify([{ x: 0, y: 0, w: 960, h: 270 }, { x: 0, y: 270, w: 960, h: 270 }]), JSON.stringify(d.views) + ` render=${d.renders}`);
+check('Tiap kamera mengikuti mobilnya sendiri (rasio 960:270)', d.players.every((p) => Math.hypot(p.cam.x - p.x, p.cam.z - p.z) < 15 && Math.abs(p.cam.aspect - 960 / 270) < 0.01), d.players.map((p) => Math.hypot(p.cam.x - p.x, p.cam.z - p.z).toFixed(1)).join(','));
+let panes = await page.evaluate(() =>
+  [...document.querySelectorAll('.hud[data-pane]')].map((el) => ({ hidden: el.hidden, y: Math.round(el.getBoundingClientRect().y), h: Math.round(el.getBoundingClientRect().height), who: el.querySelector('[data-who-name]').textContent, whoOn: !el.querySelector('[data-who]').hidden, nitroKey: el.querySelector('.nitro-label kbd').textContent })),
+);
+check('Dua panel HUD (atas & bawah) dengan nama & tombol nitro masing-masing', panes.length === 2 && panes.every((p) => !p.hidden && p.whoOn && p.h === 270) && panes[1].y === 270 && panes[0].who === 'DANI' && panes[1].who === 'BUDI77' && panes[0].nitroKey === 'Shift kiri' && panes[1].nitroKey === 'Shift kanan', JSON.stringify(panes));
+check('Papan nama di atas mobil kedua pemain; tombol sentuh disembunyikan', d.p1tag && d.p2.tag && !d.touch);
+await page.keyboard.down('KeyW');
+await page.keyboard.down('ArrowUp');
+r = await waitFor((x) => x.phase === 'countdown' && x.countdown < 1.5, 30000, 50);
+check('Saat hitung mundur kedua mobil diam walau gas ditekan', r.s.players.every((p) => Math.abs(p.speedKmh) < 0.01));
+await page.keyboard.up('KeyW');
+r = await waitFor((x) => x.phase === 'racing' && x.raceTime > 2, 60000);
+check('Panah ↑ hanya menggerakkan PEMAIN 2', r.s.players[1].speedKmh > 30 && Math.abs(r.s.players[0].speedKmh) < 1, r.s.players.map((p) => p.speedKmh.toFixed(0)).join(' / '));
+await page.keyboard.down('KeyW');
+r = await waitFor((x) => x.players[0].speedKmh > 30, 60000);
+check('W menggerakkan PEMAIN 1', r.ok, r.s.players.map((p) => p.speedKmh.toFixed(0)).join(' / '));
+await page.keyboard.down('ShiftRight');
+r = await waitFor((x) => x.players[1].boosting, 60000, 100);
+check('Shift kanan = nitro PEMAIN 2 saja', r.ok && !r.s.players[0].boosting);
+await page.keyboard.up('ShiftRight');
+await page.keyboard.down('ShiftLeft');
+r = await waitFor((x) => x.players[0].boosting && !x.players[1].boosting, 60000, 100);
+check('Shift kiri = nitro PEMAIN 1 saja', r.ok);
+await page.evaluate(() => (window.__skantri.timeScale = 0));
+await sleep(2500);
+d = await snap();
+const hudSpeeds = await page.$$eval('[data-speed]', (els) => els.map((e) => Number(e.textContent)));
+check('Speedometer tiap panel menampilkan kecepatan mobilnya sendiri', Math.abs(hudSpeeds[0] - Math.abs(d.players[0].speedKmh)) < 3 && Math.abs(hudSpeeds[1] - Math.abs(d.players[1].speedKmh)) < 3, `HUD ${hudSpeeds.join('/')} · fisika ${d.players.map((p) => p.speedKmh.toFixed(0)).join('/')}`);
+await page.screenshot({ path: `${OUT}/18-duo-atas-bawah.png` });
+let issues = await hudLayoutIssues();
+check('HUD tiap panel tidak saling menimpa & tidak keluar dari bagiannya (atas–bawah 960×540)', issues.length === 0, issues.join(', '));
+await page.evaluate(() => (window.__skantri.timeScale = 1));
+await page.keyboard.up('ShiftLeft');
+await page.keyboard.down('ArrowRight');
+await page.keyboard.down('Slash');
+r = await waitFor((x) => x.players[1].drifting, 60000, 100);
+await page.keyboard.up('Slash');
+await page.keyboard.up('ArrowRight');
+check('/ = drift PEMAIN 2', r.ok);
+await page.keyboard.up('ArrowUp');
+await page.keyboard.press('Backspace');
+r = await waitFor((x) => Math.abs(x.players[1].lateral) < 0.3 && Math.abs(x.players[1].speedKmh) < 1, 10000);
+check('Backspace = reset PEMAIN 2 saja (PEMAIN 1 tetap melaju)', r.ok && r.s.players[0].speedKmh > 5, r.s.players.map((p) => `${p.speedKmh.toFixed(0)}km/j lat ${p.lateral.toFixed(2)}`).join(' / '));
+await page.keyboard.up('KeyW');
+
+// --- Gamepad tiruan (navigator.getGamepads diganti)
+/** Tunggu n frame game benar-benar berjalan (gamepad dibaca sekali per frame). */
+const frames = (n = 2) =>
+  page.evaluate((k) => new Promise((res) => {
+    let left = k;
+    const tick = () => (--left <= 0 ? res() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  }), n);
+await page.evaluate(() => {
+  const mk = (index) => ({ index, id: `Gamepad uji ${index + 1}`, connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) });
+  window.__pads = [mk(0)];
+  window.__mkPad = mk;
+  navigator.getGamepads = () => window.__pads;
+});
+await frames(3);
+d = await snap();
+check('1 gamepad terdeteksi → otomatis dipakai PEMAIN 2', d.pads === 1 && d.padOwners[0] === 1, `pads=${d.pads} owner=${d.padOwners}`);
+const v2a = d.players[1].speedKmh;
+await page.evaluate(() => {
+  window.__pads[0].buttons[7] = { pressed: true, value: 1 };
+  window.__pads[0].axes[0] = -1;
+});
+await simWait(1.5);
+d = await snap();
+check('RT gamepad → PEMAIN 2 melaju, stik kiri membelokkan; PEMAIN 1 tidak terpengaruh', d.players[1].controls.throttle === 1 && d.players[1].controls.steer === -1 && d.players[0].controls.throttle === 0 && d.players[1].speedKmh > v2a + 10, `P2 ${JSON.stringify(d.players[1].controls)} ${v2a.toFixed(0)}→${d.players[1].speedKmh.toFixed(0)} km/j`);
+await page.evaluate(() => {
+  window.__pads[0].buttons[7] = { pressed: false, value: 0 };
+  window.__pads[0].axes[0] = 0;
+});
+await frames(3);
+await page.evaluate(() => (window.__pads[0].buttons[9] = { pressed: true, value: 1 }));
+r = await waitFor((x) => x.mode === 'paused', 30000);
+await page.evaluate(() => (window.__pads[0].buttons[9] = { pressed: false, value: 0 }));
+await frames(3);
+await page.evaluate(() => (window.__pads[0].buttons[9] = { pressed: true, value: 1 }));
+let r2 = await waitFor((x) => x.mode === 'playing', 30000);
+await page.evaluate(() => (window.__pads[0].buttons[9] = { pressed: false, value: 0 }));
+await frames(3);
+check('Tombol Start gamepad → jeda lalu lanjut', r.ok && r2.ok, `jeda=${r.ok} lanjut=${r2.ok}`);
+if (r.ok && !r2.ok) {
+  // pastikan bagian berikutnya tidak ikut gagal karena game masih dijeda
+  await page.keyboard.press('Escape');
+  await waitFor((x) => x.mode === 'playing', 10000);
+}
+await page.evaluate(() => window.__pads.push(window.__mkPad(1)));
+await frames(3);
+d = await snap();
+check('2 gamepad → gamepad 1 = PEMAIN 1, gamepad 2 = PEMAIN 2', d.pads === 2 && d.padOwners.join() === '0,1', d.padOwners.join());
+await page.evaluate(() => (window.__pads = []));
+await frames(2);
+
+// --- Jeda membekukan kedua mobil
+await page.keyboard.press('Escape');
+r = await waitFor((x) => x.mode === 'paused', 10000);
+const frozen = JSON.stringify(r.s.players.map((p) => [p.x, p.z]));
+await sleep(1500);
+check('Esc → jeda: kedua mobil & waktu berhenti', JSON.stringify((await snap()).players.map((p) => [p.x, p.z])) === frozen && (await page.isVisible('[data-screen="pause"]')));
+await page.keyboard.press('Escape');
+await waitFor((x) => x.mode === 'playing', 10000);
+
+// --- Kedua pemain dikemudikan autopilot sampai finis
+await page.evaluate(() => {
+  const g = window.__skantri;
+  const wrap = (v, aLat) => {
+    if (v.__duoWrap) return;
+    v.__duoWrap = true;
+    const orig = v.step.bind(v);
+    v.step = (input, track, dt) => {
+      if (g.__duoAuto) {
+        const st = v.state;
+        const path = track.path;
+        const look = 12 + Math.abs(st.forwardSpeed) * 0.35;
+        const f = path.frameAt(st.s + look);
+        let err = Math.atan2(f.x - st.x, f.z - st.z) - st.heading;
+        while (err > Math.PI) err -= 2 * Math.PI;
+        while (err < -Math.PI) err += 2 * Math.PI;
+        const k = path.maxCurvatureAhead(st.s, 60);
+        const vMax = Math.min(v.phys.maxSpeed, Math.sqrt(aLat / Math.max(k, 1e-4)));
+        input.throttle = st.forwardSpeed < vMax ? 1 : 0;
+        input.brake = st.forwardSpeed > vMax + 3 ? 1 : 0;
+        input.steer = Math.max(-1, Math.min(1, -err * 2.5));
+        input.handbrake = false;
+        input.nitro = false;
+      }
+      orig(input, track, dt);
+    };
+  };
+  wrap(g.vehicle, 36);
+  wrap(g.vehicle2, 24);
+  g.__duoAuto = true;
+  g.timeScale = 8;
+});
+r = await waitFor((x) => x.players.some((p) => p.done) && !x.players.every((p) => p.done), 600000, 300);
+check('Pemain yang finis lebih dulu menunggu (autopilot); layar hasil belum muncul', r.ok && r.s.mode === 'playing', r.s.players.map((p) => `${p.name}:${p.done ? 'finis' : 'balap'}`).join(' '));
+r = await waitFor((x) => x.mode === 'results', 600000, 300);
+await page.evaluate(() => (window.__skantri.timeScale = 1));
+await sleep(1500);
+d = await snap();
+const resTitle = await page.textContent('[data-res-title]');
+const pp = d.players.map((p) => (p.dnf ? 99 : p.position));
+const expectedWinner = pp[0] < pp[1] ? 1 : 2;
+check('Layar hasil duel: pemenang = posisi akhir lebih baik', r.ok && d.result?.duo && d.result.winner === expectedWinner && resTitle === `${d.players[expectedWinner - 1].name} MENANG!`, `posisi ${pp.join('/')} → "${resTitle}"`);
+const rowsD = await page.$$eval('[data-res-body] tr', (trs) => trs.map((t) => t.textContent));
+check('Tabel hasil: 4 baris, DANI (P1) & BUDI77 (P2) ditandai', rowsD.length === 4 && rowsD.some((t) => t.includes('DANI') && t.includes('(P1)')) && rowsD.some((t) => t.includes('BUDI77') && t.includes('(P2)')), rowsD.join(' | '));
+check('Layar terbagi tetap berjalan di belakang layar hasil', d.split && d.renders === 2);
+await page.screenshot({ path: `${OUT}/19-duo-hasil.png` });
+await page.click('[data-screen="results"] [data-action="restart"]');
+r = await waitFor((x) => x.mode === 'playing' && x.phase === 'countdown' && x.duo, 10000);
+check('MAIN LAGI → balapan 2 pemain baru dari grid', r.ok && r.s.split && r.s.players.every((p) => p.lap === 1 && !p.finished && !p.done));
+// Tidak ada yang bergerak → AI finis → batas waktu habis → keduanya tidak finis
+await page.evaluate(() => {
+  const g = window.__skantri;
+  g.__duoAuto = false;
+  g.timeScale = 12;
+});
+r = await waitFor((x) => x.mode === 'results', 600000, 300);
+await page.evaluate(() => (window.__skantri.timeScale = 1));
+await sleep(1200);
+d = await snap();
+check('Keduanya tidak finis dalam batas waktu → hasil SERI', r.ok && d.result?.winner === 0 && (await page.textContent('[data-res-title]')) === 'SERI' && d.players.every((p) => p.dnf), `${d.result?.winner} · ${await page.textContent('[data-res-title]')}`);
+await page.click('[data-screen="results"] [data-action="menu"]');
+await waitFor((x) => x.mode === 'menu', 10000);
+await sleep(1500);
+const mem1 = await memAll();
+
+// --- Tata layar kiri–kanan, tanpa AI (duel)
+await openDuoLobby();
+await waitFor((x) => x.menuView === 'duo', 20000);
+await page.click('[data-screen="duo"] [data-seg="duoLayout"] [data-val="kiri-kanan"]');
+await page.click('[data-screen="duo"] [data-seg="duoRivals"] [data-val="0"]');
+await page.click('[data-action="duo-start"]');
+r = await waitFor((x) => x.mode === 'playing' && x.duo && x.phase === 'countdown', 20000);
+d = r.s;
+check('Tata layar kiri–kanan: tampilan 480×540 berdampingan; tanpa AI = duel 2 mobil', JSON.stringify(d.views) === JSON.stringify([{ x: 0, y: 0, w: 480, h: 540 }, { x: 480, y: 0, w: 480, h: 540 }]) && d.racers.length === 2 && d.players.every((p) => Math.abs(p.cam.aspect - 480 / 540) < 0.01), JSON.stringify(d.views));
+await page.keyboard.down('KeyW');
+await page.keyboard.down('ArrowUp');
+r = await waitFor((x) => x.phase === 'racing' && x.raceTime > 2.5, 60000);
+await page.keyboard.up('KeyW');
+await page.keyboard.up('ArrowUp');
+await page.evaluate(() => (window.__skantri.timeScale = 0));
+await sleep(2500);
+await page.screenshot({ path: `${OUT}/20-duo-kiri-kanan.png` });
+issues = await hudLayoutIssues();
+check('HUD tidak saling menimpa (kiri–kanan 960×540)', issues.length === 0, issues.join(', '));
+await page.setViewportSize({ width: 1280, height: 720 });
+r = await waitFor((x) => JSON.stringify(x.views) === JSON.stringify([{ x: 0, y: 0, w: 640, h: 720 }, { x: 640, y: 0, w: 640, h: 720 }]), 15000);
+await sleep(1500);
+issues = await hudLayoutIssues();
+check('Jendela diubah ukurannya → kedua tampilan & HUD ikut menyesuaikan (1280×720)', r.ok && issues.length === 0 && r.s.players.every((p) => Math.abs(p.cam.aspect - 640 / 720) < 0.01), issues.join(', '));
+await page.screenshot({ path: `${OUT}/21-duo-kiri-kanan-1280.png` });
+await page.evaluate(() => (window.__skantri.timeScale = 1));
+await page.keyboard.press('Escape');
+await waitFor((x) => x.mode === 'paused', 10000);
+await page.click('[data-action="menu"]');
+await waitFor((x) => x.mode === 'menu', 10000);
+
+// --- Kembali ke mode 1 pemain
+await page.click('[data-action="practice"]');
+r = await waitFor((x) => x.mode === 'playing' && x.raceMode === 'practice', 10000);
+await sleep(800);
+const soloKey = await page.textContent('.hud[data-pane="1"] .nitro-label kbd');
+check('Kembali ke 1 pemain: layar penuh, 1 HUD, mobil P2 & papan nama hilang', !r.s.split && r.s.renders === 1 && !r.s.p2.visible && !r.s.p1tag && (await page.isHidden('.hud[data-pane="2"]')) && r.s.car === r.s.settings.car && soloKey === 'Shift' && Math.abs((await page.evaluate(() => window.__skantri.camera.aspect)) - 1280 / 720) < 0.01, `split=${r.s.split} renders=${r.s.renders} kbd=${soloKey}`);
+await page.keyboard.press('Escape');
+await waitFor((x) => x.mode === 'paused', 10000);
+await page.click('[data-action="menu"]');
+await waitFor((x) => x.mode === 'menu', 10000);
+await sleep(1500);
+const mem2 = await memAll();
+check('Tidak ada geometri/tekstur bocor setelah bolak-balik mode 2 pemain', mem2.geometries <= mem1.geometries + 2 && mem2.textures <= mem1.textures + 2, `geo ${mem1.geometries}→${mem2.geometries}, tex ${mem1.textures}→${mem2.textures}`);
+console.log('STATS 2 pemain', JSON.stringify({ geometries: mem2.geometries, textures: mem2.textures }));
 
 const fin3 = await snap();
 console.log('STATS tahap3', JSON.stringify({ drawCalls: fin3.drawCalls, triangles: fin3.triangles, geometries: fin3.geometries, textures: fin3.textures }));

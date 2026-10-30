@@ -353,7 +353,9 @@ function carMass(car) {
 }
 
 /**
- * cars: [{ state, phys }]. Dipanggil setelah semua mobil melangkah.
+ * cars: [{ state, phys, kinematic? }]. Dipanggil setelah semua mobil melangkah.
+ * kinematic = mobil milik perangkat lain (mode online): ikut menabrak, tetapi posisinya
+ * tidak diubah di sini — perangkat pemiliknya yang menghitung pantulannya sendiri.
  * Mengembalikan jumlah kontak (untuk statistik/pengujian).
  */
 export function resolveCarCollisions(cars, track) {
@@ -361,8 +363,11 @@ export function resolveCarCollisions(cars, track) {
   const minD = CAR_CIRCLE_RADIUS * 2;
   for (let i = 0; i < cars.length; i++) {
     const A = cars[i].state;
+    const kinA = !!cars[i].kinematic;
     for (let j = i + 1; j < cars.length; j++) {
       const B = cars[j].state;
+      const kinB = !!cars[j].kinematic;
+      if (kinA && kinB) continue;
       // Uji kasar: jarak pusat
       const dxC = B.x - A.x;
       const dzC = B.z - A.z;
@@ -392,18 +397,26 @@ export function resolveCarCollisions(cars, track) {
           // Dorong keluar sebanding kebalikan massa (mobil berat/berperisai bergeser lebih sedikit)
           const overlap = minD - Math.max(d, 0);
           const wA = 1 / mA, wB = 1 / mB, wSum = wA + wB;
-          A.x -= nx * overlap * (wA / wSum);
-          A.z -= nz * overlap * (wA / wSum);
-          B.x += nx * overlap * (wB / wSum);
-          B.z += nz * overlap * (wB / wSum);
+          if (!kinA) {
+            A.x -= nx * overlap * (wA / wSum);
+            A.z -= nz * overlap * (wA / wSum);
+          }
+          if (!kinB) {
+            B.x += nx * overlap * (wB / wSum);
+            B.z += nz * overlap * (wB / wSum);
+          }
           // Impuls bila saling mendekat
           const rel = (B.vx - A.vx) * nx + (B.vz - A.vz) * nz;
           if (rel < 0) {
             const jImp = (-(1 + CAR_RESTITUTION) * rel) / wSum;
-            A.vx -= nx * jImp * wA;
-            A.vz -= nz * jImp * wA;
-            B.vx += nx * jImp * wB;
-            B.vz += nz * jImp * wB;
+            if (!kinA) {
+              A.vx -= nx * jImp * wA;
+              A.vz -= nz * jImp * wA;
+            }
+            if (!kinB) {
+              B.vx += nx * jImp * wB;
+              B.vz += nz * jImp * wB;
+            }
             A.carImpact = Math.max(A.carImpact || 0, -rel);
             B.carImpact = Math.max(B.carImpact || 0, -rel);
           }
@@ -416,6 +429,7 @@ export function resolveCarCollisions(cars, track) {
   if (contacts > 0) {
     // Mobil yang terdorong tidak boleh menembus pembatas
     for (const c of cars) {
+      if (c.kinematic) continue;
       collideWalls(c.state, c.phys, track, 0);
       updateDerived(c.state);
     }

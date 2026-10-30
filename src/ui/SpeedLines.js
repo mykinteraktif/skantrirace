@@ -1,6 +1,7 @@
 /**
  * Garis kecepatan (speed lines) — efek "motion blur semu" saat nitro / Speed Orb / Turbo aktif.
  * Digambar di kanvas 2D transparan di atas adegan 3D (murah, tidak membebani GPU).
+ * Mode 2 pemain: tiap pemain punya kanvas sendiri seukuran bagian layarnya (setRect).
  */
 export class SpeedLines {
   constructor(container) {
@@ -10,6 +11,7 @@ export class SpeedLines {
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
     this.intensity = 0;
+    this.rect = null; // null = layar penuh
     this.lines = Array.from({ length: 70 }, () => this.#newLine(Math.random()));
     this.resize();
   }
@@ -18,10 +20,35 @@ export class SpeedLines {
     return { a: Math.random() * Math.PI * 2, r: 0.25 + progress * 0.8, speed: 1.2 + Math.random() * 1.8, len: 0.08 + Math.random() * 0.14, w: 1 + Math.random() * 2.2 };
   }
 
+  /** Batasi ke satu bagian layar {x, y, w, h} (piksel CSS dari kiri-atas); null = layar penuh. */
+  setRect(rect) {
+    this.rect = rect ? { ...rect } : null;
+    const st = this.canvas.style;
+    if (rect) {
+      st.left = `${rect.x}px`;
+      st.top = `${rect.y}px`;
+      st.width = `${rect.w}px`;
+      st.height = `${rect.h}px`;
+    } else {
+      st.left = st.top = st.width = st.height = '';
+    }
+    this.resize();
+  }
+
+  setVisible(on) {
+    this.canvas.hidden = !on;
+    if (!on) {
+      this.intensity = 0;
+      this.canvas.style.opacity = '0';
+    }
+  }
+
   resize() {
     const s = 0.5; // setengah resolusi cukup untuk garis buram
-    this.canvas.width = Math.max(1, Math.floor(window.innerWidth * s));
-    this.canvas.height = Math.max(1, Math.floor(window.innerHeight * s));
+    const w = this.rect ? this.rect.w : window.innerWidth;
+    const h = this.rect ? this.rect.h : window.innerHeight;
+    this.canvas.width = Math.max(1, Math.floor(w * s));
+    this.canvas.height = Math.max(1, Math.floor(h * s));
   }
 
   /** target 0..1, color css */

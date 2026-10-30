@@ -69,6 +69,19 @@ export class ItemSystem {
     }
   }
 
+  /**
+   * Mode online (host): tamu melaporkan sudah mengambil item `id` (efeknya sudah diterapkan di perangkat tamu).
+   * Item dinonaktifkan di sini agar ikut hilang bagi semua pembalap. Mengembalikan true bila item masih aktif.
+   */
+  takeRemote(id, car = null) {
+    const it = this.items[id];
+    if (!it || !it.active) return false;
+    it.active = false;
+    it.timer = ITEM_TYPES[it.type].respawn;
+    this.events.push({ type: 'pickup', item: it, car, remote: true });
+    return true;
+  }
+
   drainEvents() {
     const e = this.events.slice();
     this.events.length = 0;

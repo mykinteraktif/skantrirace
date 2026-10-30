@@ -9,8 +9,9 @@ export class GameAudio {
   constructor() {
     this.ctx = null;
     this.master = null;
-    this.engine = null;
-    this.nitroNode = null;
+    this.engines = []; // satu suara mesin per pemain (mode 2 pemain: 2 suara, digeser kiri/kanan)
+    this.nitroNodes = [];
+    this.pans = [0, 0];
     this.muted = false;
     this.volume = 0.7; // 0..1 dari PENGATURAN
     try {
@@ -40,8 +41,33 @@ export class GameAudio {
     this.master = this.ctx.createGain();
     this.master.gain.value = this.#level();
     this.master.connect(this.ctx.destination);
-    this.#buildEngine();
-    this.#buildNitro();
+    this.#voice(0);
+  }
+
+  /** Mesin + desis nitro untuk pemain ke-i (dibuat saat pertama dibutuhkan). */
+  #voice(i) {
+    if (!this.ctx) return null;
+    if (!this.engines[i]) {
+      const out = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : this.ctx.createGain();
+      if (out.pan) out.pan.value = this.pans[i] ?? 0;
+      out.connect(this.master);
+      this.engines[i] = this.#buildEngine(out);
+      this.engines[i].out = out;
+      this.nitroNodes[i] = this.#buildNitro(out);
+    }
+    return this.engines[i];
+  }
+
+  /**
+   * Mode 2 pemain: suara mesin PEMAIN 1 sedikit ke kiri, PEMAIN 2 ke kanan (sesuai posisi duduk di depan keyboard).
+   * duo = false → kembali ke tengah.
+   */
+  setDuo(duo) {
+    this.duo = !!duo;
+    this.pans = duo ? [-0.35, 0.35] : [0, 0];
+    this.engines.forEach((e, i) => {
+      if (e?.out?.pan) e.out.pan.setTargetAtTime(this.pans[i] ?? 0, this.ctx.currentTime, 0.05);
+    });
   }
 
   #level() {
@@ -63,7 +89,7 @@ export class GameAudio {
   }
 
   /** Desis nitro: noise berulang + filter band-pass. */
-  #buildNitro() {
+  #buildNitro(dest) {
     const c = this.ctx;
     const src = c.createBufferSource();
     src.buffer = this.#noiseBuffer(1.5);
@@ -74,16 +100,17 @@ export class GameAudio {
     f.Q.value = 0.8;
     const g = c.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(dest);
     src.start();
-    this.nitroNode = { gain: g, filter: f };
+    return { gain: g, filter: f };
   }
 
-  updateNitro(active, speedRatio = 0.5) {
-    const n = this.nitroNode;
+  updateNitro(active, speedRatio = 0.5, i = 0) {
+    if (active) this.#voice(i);
+    const n = this.nitroNodes[i];
     if (!n) return;
     const t = this.ctx.currentTime;
-    n.gain.gain.setTargetAtTime(active ? 0.16 : 0, t, active ? 0.04 : 0.15);
+    n.gain.gain.setTargetAtTime(active ? (this.duo ? 0.12 : 0.16) : 0, t, active ? 0.04 : 0.15);
     n.filter.frequency.setTargetAtTime(700 + speedRatio * 1400, t, 0.1);
   }
 
@@ -114,7 +141,7 @@ export class GameAudio {
   }
 
   // ------------------------------------------------------------ mesin
-  #buildEngine() {
+  #buildEngine(dest) {
     const c = this.ctx;
     const gain = c.createGain();
     gain.gain.value = 0;
@@ -130,15 +157,15 @@ export class GameAudio {
     o2g.gain.value = 0.35;
     o1.connect(filter);
     o2.connect(o2g).connect(filter);
-    filter.connect(gain).connect(this.master);
+    filter.connect(gain).connect(dest);
     o1.start();
     o2.start();
-    this.engine = { gain, filter, o1, o2, on: false };
+    return { gain, filter, o1, o2, on: false };
   }
 
-  /** speedRatio 0..1, throttle 0..1. Dipanggil tiap frame selama balapan. */
-  updateEngine(speedRatio, throttle, active) {
-    const e = this.engine;
+  /** speedRatio 0..1, throttle 0..1. Dipanggil tiap frame selama balapan. i = indeks pemain. */
+  updateEngine(speedRatio, throttle, active, i = 0) {
+    const e = active ? this.#voice(i) : this.engines[i];
     if (!e) return;
     const t = this.ctx.currentTime;
     // Simulasi gigi: putaran naik dalam tiap "gigi", lalu turun saat pindah gigi
@@ -150,12 +177,15 @@ export class GameAudio {
     e.o1.frequency.setTargetAtTime(f, t, 0.05);
     e.o2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
     e.filter.frequency.setTargetAtTime(400 + throttle * 900 + rpm * 600, t, 0.08);
-    e.gain.gain.setTargetAtTime(active ? 0.06 + throttle * 0.07 : 0, t, 0.12);
+    const k = this.duo ? 0.75 : 1; // dua mesin sekaligus → masing-masing sedikit lebih pelan
+    e.gain.gain.setTargetAtTime(active ? (0.06 + throttle * 0.07) * k : 0, t, 0.12);
   }
 
   stopEngine() {
-    if (this.engine) this.engine.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
-    this.updateNitro(false);
+    this.engines.forEach((e, i) => {
+      if (e) e.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+      this.updateNitro(false, 0.5, i);
+    });
   }
 
   // ------------------------------------------------------------ efek singkat

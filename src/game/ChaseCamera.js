@@ -17,7 +17,36 @@ export class ChaseCamera {
     this.menuS = 0;
     this.boostPull = 0;
     this.orbitA = 0.6;
+    this.fovK = 1; // pengali tan(FOV/2) untuk layar terbagi (1 = layar penuh)
+    this.fovCur = camera.fov;
     this._tmp = new THREE.Vector3();
+  }
+
+  /**
+   * Sesuaikan FOV dengan rasio tampilan: layar terbagi atas-bawah sangat lebar → FOV vertikal dipersempit
+   * agar mobil tidak tampak kecil; kiri-kanan sempit → FOV vertikal diperlebar agar tikungan tetap terlihat.
+   * aspect = null → kembali normal (layar penuh).
+   */
+  setViewAspect(aspect) {
+    const ref = 16 / 9;
+    let k = 1;
+    if (aspect) k = aspect > ref ? Math.pow(ref / aspect, 0.6) : Math.pow(ref / aspect, 0.4);
+    this.fovK = k;
+    this.#applyFov(true);
+  }
+
+  #effectiveFov(fov) {
+    if (this.fovK === 1) return fov;
+    return THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(fov) / 2) * this.fovK));
+  }
+
+  #applyFov(force = false) {
+    const cam = this.camera;
+    const eff = this.#effectiveFov(this.fovCur);
+    if (force || Math.abs(cam.fov - eff) > 0.01) {
+      cam.fov = eff;
+      cam.updateProjectionMatrix();
+    }
   }
 
   addShake(amount) {
@@ -95,6 +124,22 @@ export class ChaseCamera {
     this.#apply(dt, 42);
   }
 
+  /** Lobi 2 pemain: kamera di depan kedua mobil, bergoyang pelan. */
+  showcase(dt, a, b) {
+    this.orbitA += dt * 0.25;
+    const pa = a.object.position, pb = b.object.position;
+    const h = a.state.heading;
+    const fx = Math.sin(h), fz = Math.cos(h);
+    const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2, mz = (pa.z + pb.z) / 2;
+    const sway = Math.sin(this.orbitA) * 2;
+    // Kamera 14 m di depan mobil, bergeser ke samping (tegak lurus arah hadap). Titik bidik di bawah
+    // mobil → mobil tampak di bagian atas-tengah layar, tidak tertutup panel pilihan di bawah.
+    this.pos.set(mx + fx * 14 + fz * sway, my + 2.7, mz + fz * 14 - fx * sway);
+    this.look.set(mx, my - 2, mz);
+    this.trauma = 0;
+    this.#apply(dt, 44);
+  }
+
   #apply(dt, fov) {
     const cam = this.camera;
     cam.position.copy(this.pos);
@@ -106,9 +151,9 @@ export class ChaseCamera {
       this.trauma = Math.max(0, this.trauma - dt * 1.8);
     }
     cam.lookAt(this.look);
-    if (fov && Math.abs(cam.fov - fov) > 0.05) {
-      cam.fov += (fov - cam.fov) * (dt > 0 ? 1 - Math.exp(-4 * dt) : 1);
-      cam.updateProjectionMatrix();
+    if (fov && Math.abs(this.fovCur - fov) > 0.05) {
+      this.fovCur += (fov - this.fovCur) * (dt > 0 ? 1 - Math.exp(-4 * dt) : 1);
     }
+    this.#applyFov();
   }
 }

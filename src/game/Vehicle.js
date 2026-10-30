@@ -53,21 +53,7 @@ export class Vehicle {
     this.lastForward = 0;
     this.time = 0;
 
-    if (opts.name) {
-      const tag = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: nameTagTexture(opts.name, opts.number ?? '', '#' + new THREE.Color(opts.color ?? spec.color).getHexString()),
-          transparent: true,
-          depthWrite: false,
-          fog: true,
-        }),
-      );
-      tag.scale.set(3.2, 0.8, 1);
-      tag.position.set(0, 2.45, 0);
-      tag.renderOrder = 2;
-      this.object.add(tag);
-      this.nameTag = tag;
-    }
+    if (opts.name) this.setNameTag(opts.name, opts.number ?? '', '#' + new THREE.Color(opts.color ?? spec.color).getHexString());
 
     // Gelembung perisai (tersembunyi sampai item Shield aktif)
     const len = spec.shape.nose - spec.shape.tail;
@@ -77,6 +63,28 @@ export class Vehicle {
     this.shield.visible = false;
     this.shield.renderOrder = 3;
     this.object.add(this.shield);
+  }
+
+  /** Pasang / ganti / lepas papan nama di atas mobil (name = null → lepas). */
+  setNameTag(name, number = '', color = '#22d3ee') {
+    const key = name ? `${name}|${number}|${color}` : null;
+    if (key === this.nameTagKey) return;
+    if (this.nameTag) {
+      this.nameTag.material.map?.dispose();
+      this.nameTag.material.dispose();
+      this.nameTag.removeFromParent();
+      this.nameTag = null;
+    }
+    this.nameTagKey = key;
+    if (!name) return;
+    const tag = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: nameTagTexture(name, number, color), transparent: true, depthWrite: false, fog: true }),
+    );
+    tag.scale.set(3.2, 0.8, 1);
+    tag.position.set(0, 2.45, 0);
+    tag.renderOrder = 2;
+    this.object.add(tag);
+    this.nameTag = tag;
   }
 
   place(track, s, lateral = 0) {

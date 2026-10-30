@@ -304,8 +304,16 @@ export function numberTexture(num = '01') {
 export function nameTagTexture(name, number, color = '#22d3ee') {
   const W = 512, H = 128;
   const [c, ctx] = makeCanvas(W, H);
-  ctx.font = 'italic 400 64px "Russo One", "Segoe UI", sans-serif';
-  const textW = ctx.measureText(name).width;
+  // Nama panjang (mis. nama siswa) → huruf diperkecil agar tetap muat di papan
+  let size = 64;
+  ctx.font = `italic 400 ${size}px "Russo One", "Segoe UI", sans-serif`;
+  let textW = ctx.measureText(name).width;
+  const room = W - 8 - 150;
+  if (textW > room) {
+    size = Math.max(30, Math.floor((size * room) / textW));
+    ctx.font = `italic 400 ${size}px "Russo One", "Segoe UI", sans-serif`;
+    textW = ctx.measureText(name).width;
+  }
   const boxW = Math.min(W - 8, textW + 150);
   const x0 = (W - boxW) / 2;
   ctx.fillStyle = 'rgba(6, 16, 31, 0.82)';
@@ -324,8 +332,8 @@ export function nameTagTexture(name, number, color = '#22d3ee') {
   ctx.font = 'italic 400 54px "Russo One", "Segoe UI", sans-serif';
   ctx.fillText(number, x0 + 60, H / 2 + 3);
   ctx.textAlign = 'left';
-  ctx.font = 'italic 400 64px "Russo One", "Segoe UI", sans-serif';
-  ctx.fillText(name, x0 + 120, H / 2 + 4);
+  ctx.font = `italic 400 ${size}px "Russo One", "Segoe UI", sans-serif`;
+  ctx.fillText(name, x0 + 120, H / 2 + 4, room);
   const t = toTexture(c, { repeat: false });
   return t;
 }

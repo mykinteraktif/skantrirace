@@ -19,8 +19,35 @@ function ticksSvg() {
   return out;
 }
 
-const TEMPLATE = /* html */ `
+// Petunjuk tombol: 0 = pemain tunggal, 1 = PEMAIN 1, 2 = PEMAIN 2 (mode layar terbagi)
+const HINTS = {
+  0: `<span><kbd>W</kbd><kbd>↑</kbd> Gas</span>
+    <span><kbd>S</kbd><kbd>↓</kbd> Rem / Mundur</span>
+    <span><kbd>A</kbd><kbd>D</kbd> Belok</span>
+    <span><kbd>Spasi</kbd> Drift</span>
+    <span><kbd>Shift</kbd> Nitro</span>
+    <span><kbd>R</kbd> Reset</span>
+    <span><kbd>M</kbd> Suara</span>
+    <span><kbd>Esc</kbd> Jeda</span>`,
+  1: `<span><kbd>W</kbd> Gas</span>
+    <span><kbd>S</kbd> Rem</span>
+    <span><kbd>A</kbd><kbd>D</kbd> Belok</span>
+    <span><kbd>Spasi</kbd> Drift</span>
+    <span><kbd>Shift</kbd> kiri Nitro</span>
+    <span><kbd>R</kbd> Reset</span>
+    <span><kbd>Esc</kbd> Jeda</span>`,
+  2: `<span><kbd>↑</kbd> Gas</span>
+    <span><kbd>↓</kbd> Rem</span>
+    <span><kbd>←</kbd><kbd>→</kbd> Belok</span>
+    <span><kbd>/</kbd> Drift</span>
+    <span><kbd>Shift</kbd> kanan Nitro</span>
+    <span><kbd>⌫</kbd> Reset</span>`,
+};
+const NITRO_KEY = { 0: 'Shift', 1: 'Shift kiri', 2: 'Shift kanan' };
+
+const template = (player) => /* html */ `
   <div class="hud-panel hud-tl">
+    <div class="hud-who" data-who hidden><i data-who-color></i><span data-who-name></span><em class="hud-net" data-who-net hidden></em></div>
     <div class="hud-row race-only">
       <div>
         <div class="hud-label">POSISI</div>
@@ -73,7 +100,7 @@ const TEMPLATE = /* html */ `
   <div class="hud-br">
     <svg viewBox="0 0 200 200" class="speedo">
       <defs>
-        <linearGradient id="spd" x1="0" y1="1" x2="1" y2="0">
+        <linearGradient id="spd-${player}" x1="0" y1="1" x2="1" y2="0">
           <stop offset="0" stop-color="#22d3ee"/>
           <stop offset="0.7" stop-color="#3b82f6"/>
           <stop offset="1" stop-color="#ef4444"/>
@@ -81,7 +108,7 @@ const TEMPLATE = /* html */ `
       </defs>
       <circle cx="100" cy="100" r="94" class="speedo-bg"/>
       <path d="${ARC}" class="speedo-track" pathLength="100"/>
-      <path d="${ARC}" class="speedo-value" pathLength="100" data-arc stroke-dasharray="0 100"/>
+      <path d="${ARC}" class="speedo-value" pathLength="100" data-arc stroke-dasharray="0 100" stroke="url(#spd-${player})"/>
       ${ticksSvg()}
     </svg>
     <div class="speedo-num mono" data-speed>0</div>
@@ -90,7 +117,7 @@ const TEMPLATE = /* html */ `
   </div>
 
   <div class="hud-nitro" data-nitro>
-    <div class="nitro-label"><span>NITRO</span><kbd>Shift</kbd></div>
+    <div class="nitro-label"><span>NITRO</span><kbd>${NITRO_KEY[player] ?? 'Shift'}</kbd></div>
     <div class="nitro-bar"><i data-nitro-fill></i></div>
   </div>
 
@@ -105,27 +132,25 @@ const TEMPLATE = /* html */ `
     <span class="chip chip-air" data-air>MELAYANG!</span>
   </div>
 
-  <div class="hud-hint" data-hint>
-    <span><kbd>W</kbd><kbd>↑</kbd> Gas</span>
-    <span><kbd>S</kbd><kbd>↓</kbd> Rem / Mundur</span>
-    <span><kbd>A</kbd><kbd>D</kbd> Belok</span>
-    <span><kbd>Spasi</kbd> Drift</span>
-    <span><kbd>Shift</kbd> Nitro</span>
-    <span><kbd>R</kbd> Reset</span>
-    <span><kbd>M</kbd> Suara</span>
-    <span><kbd>Esc</kbd> Jeda</span>
-  </div>
+  <div class="hud-hint" data-hint>${HINTS[player] ?? HINTS[0]}</div>
 
   <div class="hud-flash" data-flash></div>
   <div class="hud-fps mono" data-fps hidden></div>
 `;
 
 export class HUD {
-  constructor(root) {
+  /** opts.player: 0 = pemain tunggal (bawaan), 1 / 2 = panel PEMAIN 1 / PEMAIN 2 di layar terbagi */
+  constructor(root, opts = {}) {
     this.root = root;
-    root.innerHTML = TEMPLATE;
+    this.player = opts.player ?? 0;
+    root.innerHTML = template(this.player);
+    root.dataset.player = String(this.player);
     const q = (sel) => root.querySelector(sel);
     this.el = {
+      who: q('[data-who]'),
+      whoName: q('[data-who-name]'),
+      whoColor: q('[data-who-color]'),
+      whoNet: q('[data-who-net]'),
       pos: q('[data-pos]'),
       posTotal: q('[data-pos-total]'),
       lapRace: q('[data-lap-race]'),
@@ -167,6 +192,34 @@ export class HUD {
 
   show(visible) {
     this.root.hidden = !visible;
+  }
+
+  /** Ganti petunjuk tombol & label nitro: 0 = pemain tunggal, 1 = PEMAIN 1, 2 = PEMAIN 2. */
+  setControls(player) {
+    if (this.player === player) return;
+    this.player = player;
+    this.root.dataset.player = String(player);
+    this.el.hint.innerHTML = HINTS[player] ?? HINTS[0];
+    this.root.querySelector('.nitro-label kbd').textContent = NITRO_KEY[player] ?? 'Shift';
+  }
+
+  /** Info jaringan di samping nama (mode online), mis. "ONLINE · 42 ms". text = null → sembunyikan. */
+  setNetInfo(text, bad = false) {
+    const el = this.el.whoNet;
+    el.hidden = !text;
+    if (!text) return;
+    this.#set('net', text, el);
+    this.#toggle('netBad', !!bad, el);
+  }
+
+  /** Label pemain di panel kiri-atas (mode 2 pemain). name = null → sembunyikan. */
+  setIdentity(name, color) {
+    this.el.who.hidden = !name;
+    if (!name) this.el.whoNet.hidden = true;
+    if (!name) return;
+    this.el.whoName.textContent = name;
+    this.el.whoColor.style.background = color;
+    this.root.style.setProperty('--pc', color);
   }
 
   /** 'race' atau 'practice' — menentukan panel mana yang tampil. */
@@ -233,15 +286,19 @@ export class HUD {
   }
 
   // ---------------------------------------------------------------- klasemen
-  /** racers: [{ name, color, isPlayer }] urut grid; dibuat sekali per balapan. */
-  setRacers(racers) {
+  /**
+   * racers: [{ name, color, isPlayer, playerIndex }] urut grid; dibuat sekali per balapan.
+   * me: racer pemilik panel ini (mode 2 pemain); bawaan = pembalap manusia.
+   */
+  setRacers(racers, me = null) {
     const ol = this.el.standings;
     ol.innerHTML = '';
     this.standingRows = racers.map((r) => {
+      const mine = me ? r === me : r.isPlayer;
       const li = document.createElement('li');
-      li.className = r.isPlayer ? 'me' : '';
+      li.className = mine ? 'me' : r.isPlayer ? 'human' : '';
       li.innerHTML = `<span class="st-pos"></span><i style="background:${r.color}"></i><span class="st-name"></span><span class="st-flag" title="Sudah finis"></span>`;
-      li.querySelector('.st-name').textContent = r.isPlayer ? `${r.name} (KAMU)` : r.name;
+      li.querySelector('.st-name').textContent = mine ? `${r.name} (KAMU)` : r.isPlayer ? `${r.name} (P${r.playerIndex ?? 2})` : r.name;
       ol.appendChild(li);
       return { li, racer: r, pos: 0 };
     });
@@ -290,7 +347,7 @@ export class HUD {
     this.map = { ctx: canvas.getContext('2d'), dpr, size, line, tx, tz, start: f };
   }
 
-  /** markers: [{x, z, heading, color, me}] — penanda pemain digambar terakhir (paling atas) */
+  /** markers: [{x, z, heading, color, me, human}] — penanda pemain digambar terakhir (paling atas) */
   drawMinimap(markers) {
     const m = this.map;
     if (!m) return;
@@ -318,10 +375,10 @@ export class HUD {
       ctx.translate(x, z);
       ctx.rotate(-mk.heading); // heading 0 = +Z (ke bawah di peta)
       ctx.fillStyle = mk.color;
-      ctx.strokeStyle = mk.me ? '#ffffff' : '#020617';
+      ctx.strokeStyle = mk.me || mk.human ? '#ffffff' : '#020617';
       ctx.lineWidth = mk.me ? 2 : 1.5;
       ctx.beginPath();
-      const s = mk.me ? 7.5 : 5;
+      const s = mk.me ? 7.5 : mk.human ? 6.5 : 5;
       ctx.moveTo(0, s);
       ctx.lineTo(s * 0.75, -s * 0.7);
       ctx.lineTo(-s * 0.75, -s * 0.7);
@@ -384,6 +441,9 @@ export class HUD {
         }
       }
     }
+
+    // Layar terbagi: petunjuk tombol berbagi tempat dengan baris efek item → sembunyikan saat ada efek
+    if (this.player !== 0 && this.hintTimer > 0 && d.fx && (d.fx.speed > 0 || d.fx.shield > 0 || d.fx.turbo > 0)) this.hintTimer = 0.001;
 
     this.#toggle('drift', d.drifting, this.el.drift);
     this.#toggle('air', d.airborne, this.el.air);

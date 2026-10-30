@@ -214,11 +214,7 @@ export class RaceManager {
 
   /** Arah salah: bergerak berlawanan dengan arah lintasan. */
   isWrongWay(r) {
-    const st = r.vehicle.state;
-    const speed = Math.hypot(st.vx, st.vz);
-    if (speed < 5) return false;
-    const dot = (st.vx * st.tangentX + st.vz * st.tangentZ) / speed;
-    return dot < -0.35;
+    return isWrongWayState(r.vehicle.state);
   }
 
   drainEvents() {
@@ -226,6 +222,20 @@ export class RaceManager {
     this.events.length = 0;
     return e;
   }
+}
+
+/** Mobil bergerak berlawanan arah lintasan? (dipakai juga oleh RaceMirror mode online) */
+export function isWrongWayState(st) {
+  const speed = Math.hypot(st.vx, st.vz);
+  if (speed < 5) return false;
+  const dot = (st.vx * st.tangentX + st.vz * st.tangentZ) / speed;
+  return dot < -0.35;
+}
+
+export function checkpointPositions(length, checkpoints = 4) {
+  const out = [];
+  for (let i = 1; i < checkpoints; i++) out.push((i / checkpoints) * length);
+  return out;
 }
 
 export function formatTime(t) {
